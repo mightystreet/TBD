@@ -1,0 +1,25 @@
+{
+  "name": "pixel-art-prototype",
+  "version": "1.0.0",
+  "description": "Collaborative pixel art application with real-time multiplayer features",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev:frontend & npm run dev:backend",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && npm start index.js",
+    "postinstall": "cd frontend && npm install && cd ../backend && npm install"
+  },
+  "dependencies": {},
+  "keywords": [
+    "pixel-art",
+    "collaborative",
+    "real-time",
+    "websocket",
+    "react",
+    "node.js"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
