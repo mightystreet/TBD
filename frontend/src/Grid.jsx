@@ -524,7 +524,7 @@ function Grid({ cellSize = 20, canvasSize = 720, onPixelPlaced }) {
     // Set tooltip position relative to the viewport
     // Adjust position to prevent tooltip from going off-screen
     const tooltipWidth = 220;
-    const tooltipHeight = 120;
+    const tooltipHeight = 160; // Increased to account for actual content height
     const margin = 10;
     
     let tooltipX = e.clientX + margin;

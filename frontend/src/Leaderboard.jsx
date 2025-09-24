@@ -15,6 +15,8 @@ const Leaderboard = ({ token, refreshTrigger }) => {
    * Fetch leaderboard data from backend
    */
   const fetchLeaderboard = async () => {
+    if (!token) return;
+    
     try {
       setLoading(true);
       const response = await fetch('/api/leaderboard', {
@@ -25,7 +27,14 @@ const Leaderboard = ({ token, refreshTrigger }) => {
       });
       
       if (!response.ok) {
-        throw new Error('Failed to fetch leaderboard data');
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          throw new Error('Please log in to view leaderboard');
+        } else if (response.status === 403) {
+          throw new Error('Session expired, please log in again');
+        } else {
+          throw new Error(errorData.error || `Failed to fetch leaderboard data (${response.status})`);
+        }
       }
       
       const data = await response.json();
@@ -46,6 +55,11 @@ const Leaderboard = ({ token, refreshTrigger }) => {
       // Refresh every 30 seconds
       const interval = setInterval(fetchLeaderboard, 30000);
       return () => clearInterval(interval);
+    } else {
+      // Clear data and reset states when no token
+      setLeaderboardData([]);
+      setLoading(false);
+      setError(null);
     }
   }, [token]);
 
@@ -94,6 +108,19 @@ const Leaderboard = ({ token, refreshTrigger }) => {
         return leaderboardData;
     }
   };
+
+  if (!token) {
+    return (
+      <div className="leaderboard-container">
+        <div className="leaderboard-header">
+          <h2>🏆 Leaderboard</h2>
+        </div>
+        <div className="error">
+          <p>🔒 Please log in to view the leaderboard</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

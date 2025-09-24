@@ -25,7 +25,14 @@ const ActivityStats = ({ token, refreshTrigger }) => {
       });
       
       if (!response.ok) {
-        throw new Error('Failed to fetch activity data');
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          throw new Error('Please log in to view activity data');
+        } else if (response.status === 403) {
+          throw new Error('Session expired, please log in again');
+        } else {
+          throw new Error(errorData.error || `Failed to fetch activity data (${response.status})`);
+        }
       }
       
       const data = await response.json();
@@ -46,6 +53,11 @@ const ActivityStats = ({ token, refreshTrigger }) => {
       // Refresh every 10 seconds for real-time updates
       const interval = setInterval(fetchActivityData, 10000);
       return () => clearInterval(interval);
+    } else {
+      // Clear data and reset states when no token
+      setActivityData(null);
+      setLoading(false);
+      setError(null);
     }
   }, [token]);
 
@@ -55,6 +67,14 @@ const ActivityStats = ({ token, refreshTrigger }) => {
       fetchActivityData();
     }
   }, [refreshTrigger, token]);
+
+  if (!token) {
+    return (
+      <div className="activity-stats-empty">
+        <span>🔒 Please log in to view activity statistics</span>
+      </div>
+    );
+  }
 
   if (loading && !activityData) {
     return (
