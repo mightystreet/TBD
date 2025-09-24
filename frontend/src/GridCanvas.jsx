@@ -26,7 +26,11 @@ function GridCanvas({
     ctx.clearRect(0, 0, canvasSize, canvasSize);
     ctx.save();
     ctx.scale(zoom, zoom);
-    ctx.translate(-offset.x / zoom % cellSize, -offset.y / zoom % cellSize);
+    
+    // Proper modulo function that handles negative numbers correctly
+    const mod = (n, m) => ((n % m) + m) % m;
+    
+    ctx.translate(-mod(offset.x / zoom, cellSize), -mod(offset.y / zoom, cellSize));
     ctx.strokeStyle = "#e0e0e0";
     ctx.lineWidth = 1 / zoom;
     const cols = Math.ceil(canvasSize / (cellSize * zoom)) + 2;
@@ -40,7 +44,9 @@ function GridCanvas({
         const py = startRow + j;
         const key = `${px},${py}`;
         if (pixels[key]) {
-          ctx.fillStyle = pixels[key];
+          const pixelData = pixels[key];
+          const pixelColor = typeof pixelData === 'string' ? pixelData : pixelData.color;
+          ctx.fillStyle = pixelColor;
           ctx.fillRect(i * cellSize, j * cellSize, cellSize, cellSize);
           colored.add(key);
         }

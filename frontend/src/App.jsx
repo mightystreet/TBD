@@ -8,6 +8,8 @@ import Side from "./Side.jsx";      // Left/right sidebar components
 import Footer from "./Footer.jsx";  // Bottom footer component
 import Register from "./Register.jsx"; // User registration form component
 import Login from "./Login.jsx";    // User login form component
+import Leaderboard from "./Leaderboard.jsx"; // Leaderboard component
+import ActivityStats from "./ActivityStats.jsx"; // Real-time activity statistics
 import "./App.css";                 // Application-wide styles
 
 /**
@@ -47,6 +49,69 @@ function App() {
   // State to toggle between login and registration forms
   // true = show login form, false = show registration form
   const [showLogin, setShowLogin] = useState(true);
+  
+  // State to control leaderboard visibility
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  
+  // State to trigger leaderboard refresh
+  const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
+  
+  // Function to trigger leaderboard refresh
+  const refreshLeaderboard = () => {
+    setLeaderboardRefresh(prev => prev + 1);
+  };
+
+  // Define modules for side panels
+  const leftPanelModules = [
+    {
+      id: 'user-info',
+      title: 'User Info',
+      type: 'info',
+      content: {
+        text: `Welcome, ${getUsernameFromToken(token) || 'Guest'}! Use this collaborative pixel art canvas to create amazing artwork together.`,
+        icon: '👤'
+      }
+    },
+    // Conditionally add leaderboard module when showLeaderboard is true
+    ...(showLeaderboard ? [{
+      id: 'leaderboard',
+      title: 'Leaderboard',
+      type: 'custom',
+      content: {
+        render: () => (
+          <Leaderboard 
+            token={token} 
+            refreshTrigger={leaderboardRefresh} 
+          />
+        )
+      }
+    }] : [])
+  ];
+
+  const rightPanelModules = [
+    {
+      id: 'activity',
+      title: 'Recent Activity',
+      type: 'custom',
+      content: {
+        render: () => (
+          <ActivityStats 
+            token={token} 
+            refreshTrigger={leaderboardRefresh} 
+          />
+        )
+      }
+    },
+    {
+      id: 'help',
+      title: 'How to Play',
+      type: 'info',
+      content: {
+        text: 'Click on any empty cell to place a pixel. Each placement has a cooldown. Work together to create amazing art!',
+        icon: '💡'
+      }
+    }
+  ];
 
   /**
    * Handler function for successful user login
@@ -92,16 +157,33 @@ function App() {
   // Extract username from JWT token for display
   const username = getUsernameFromToken(token);
   
-  // Main application layout (rendered when user is authenticated)
+    // Main application layout (rendered when user is authenticated)
   return (
     <div className="layout-container">
-      {/* Left sidebar component */}
-      <Side position="left" />
+      {/* Left sidebar component with modules */}
+      <Side position="left" modules={leftPanelModules} collapsible={true} />
       
       {/* Main content area containing the pixel art grid */}
       <main className="main-content">
-        {/* User info and logout section in top-right corner */}
+        {/* User info and controls section in top-right corner */}
         <div style={{ float: "right", display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Leaderboard toggle button */}
+          <button 
+            onClick={() => setShowLeaderboard(!showLeaderboard)}
+            style={{
+              background: showLeaderboard ? "#ffd700" : "#4a4a4a",
+              color: showLeaderboard ? "#000" : "#fff",
+              border: "none",
+              padding: "8px 12px",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontSize: "14px",
+              fontWeight: "bold"
+            }}
+          >
+            🏆 Leaderboard
+          </button>
+          
           {/* Display current user's username */}
           <span style={{ fontWeight: 600 }}>{username}</span>
           {/* Logout button that calls handleLogout function */}
@@ -109,11 +191,11 @@ function App() {
         </div>
         
         {/* Main pixel art grid component */}
-        <Grid />
+        <Grid onPixelPlaced={refreshLeaderboard} />
       </main>
       
-      {/* Right sidebar component */}
-      <Side position="right" />
+      {/* Right sidebar component with modules */}
+      <Side position="right" modules={rightPanelModules} collapsible={true} />
       
       {/* Footer component at bottom of page */}
       <Footer />

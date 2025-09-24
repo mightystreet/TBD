@@ -8,6 +8,7 @@ import ColorPicker from "./ColorPicker";          // Color selection interface
 import Timer from "./Timer";                      // Cooldown timer display
 import FullscreenButton from "./FullscreenButton"; // Button to enter fullscreen mode
 import GridCanvas from "./GridCanvas";            // Main canvas rendering component
+import { getUsernameFromToken } from "./App";     // Import utility to get username from JWT
 
 /**
  * Grid Component - Main pixel art canvas interface
@@ -16,11 +17,13 @@ import GridCanvas from "./GridCanvas";            // Main canvas rendering compo
  * 
  * @param {number} cellSize - Size of each pixel cell in pixels (default: 20)
  * @param {number} canvasSize - Canvas dimensions in pixels (default: 720)
+ * @param {function} onPixelPlaced - Callback function called when a pixel is successfully placed
  */
-function Grid({ cellSize = 20, canvasSize = 720 }) {
+function Grid({ cellSize = 20, canvasSize = 720, onPixelPlaced }) {
   // === USER AUTHENTICATION ===
-  // Get username from localStorage (assumes login flow stores it)
-  const username = window.localStorage.getItem("username") || "guest";
+  // Get username from JWT token stored in localStorage
+  const token = localStorage.getItem("token") || "";
+  const username = getUsernameFromToken(token) || "guest";
   
   // === CONFIRMATION POPUP STATE ===
   // State for placement confirmation dialog
@@ -64,27 +67,41 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
   // === GRID DATA STATE ===
   const [pixels, setPixels] = useState({});             // Grid state: {"x,y": color}
   
+  // === HOVER TOOLTIP STATE ===
+  const [hoveredCellInfo, setHoveredCellInfo] = useState(null); // Information about hovered cell in fullscreen
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 }); // Tooltip position
+  const [hoverTooltipEnabled, setHoverTooltipEnabled] = useState(false); // Whether hover tooltip is enabled
+  
   // === WEBSOCKET CONNECTION ===
   const wsRef = useRef(null);                           // WebSocket connection reference
   
   // === PURCHASE SYSTEM ===
   // Calculate how many squares the user has purchased (by counting their color)
   const purchasedCount = useMemo(() => {
-    return Object.values(pixels).filter((c) => c === color).length;
+    return Object.values(pixels).filter((pixelData) => {
+      const pixelColor = typeof pixelData === 'string' ? pixelData : pixelData.color;
+      return pixelColor === color;
+    }).length;
   }, [pixels, color]);
 
   // === MULTIPLAYER WEBSOCKET CONNECTION ===
   // Connect to WebSocket server for real-time collaborative editing
   useEffect(() => {
-  // Use relative WebSocket URL for deployment
+  // Connect to backend WebSocket server
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsHost = window.location.host;
+  const wsHost = import.meta.env.DEV ? "localhost:5000" : window.location.host;
   const ws = new window.WebSocket(`${wsProtocol}//${wsHost}`);
     wsRef.current = ws;
     
     // WebSocket connection opened successfully
     ws.onopen = () => {
-      // Optionally: authenticate or identify user
+      // Authenticate user with the WebSocket server
+      if (username && username !== "guest") {
+        ws.send(JSON.stringify({
+          type: "authenticate",
+          username: username
+        }));
+      }
       console.log("Connected to WebSocket server");
     };
     
@@ -100,19 +117,31 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
       
       // Handle initial grid state from server
       if (data.type === "init" && data.grid) {
-        // Convert server format { key: { color, username } } to client format { key: color }
-        const colorGrid = {};
+        // Store both color and username information from server
+        const fullGrid = {};
         for (const [key, value] of Object.entries(data.grid)) {
-          colorGrid[key] = typeof value === "string" ? value : value.color;
+          if (typeof value === "string") {
+            // Legacy format: just color
+            fullGrid[key] = { color: value, username: null };
+          } else {
+            // New format: { color, username }
+            fullGrid[key] = { color: value.color, username: value.username };
+          }
         }
-        setPixels(colorGrid);
+        setPixels(fullGrid);
       } 
       // Handle real-time cell updates from other users
       else if (data.type === "cellUpdate" && data.key && data.color) {
         setPixels(prev => {
           // Prevent overwriting existing pixels (first-come-first-served)
           if (prev[data.key]) return prev;
-          return { ...prev, [data.key]: data.color };
+          return { 
+            ...prev, 
+            [data.key]: { 
+              color: data.color, 
+              username: data.username || null 
+            } 
+          };
         });
       }
     };
@@ -355,7 +384,9 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
     }
     
     // If cell is filled by the current user, do nothing
-    if (pixels[key] === color) {
+    const pixelData = pixels[key];
+    const pixelColor = typeof pixelData === 'string' ? pixelData : pixelData.color;
+    if (pixelColor === color) {
       return;
     }
     
@@ -441,6 +472,100 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
   }
 
   /**
+   * Handle mouse hover over cells in fullscreen mode
+   * Shows tooltip with cell information
+   * @param {MouseEvent} e - Mouse move event
+   */
+  function handleCellHover(e) {
+    if (!isFullscreen || colorMode || !hoverTooltipEnabled) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    
+    // Account for canvas CSS scaling
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    
+    // Get mouse position relative to canvas
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    
+    // Convert to world coordinates accounting for zoom and pan
+    const worldX = (x + offset.x) / zoom;
+    const worldY = (y + offset.y) / zoom;
+    
+    // Calculate grid cell coordinates
+    const col = Math.floor(worldX / cellSize);
+    const row = Math.floor(worldY / cellSize);
+    const key = `${col},${row}`;
+    
+    // Get cell information
+    const pixelData = pixels[key];
+    const isEmpty = !pixelData;
+    let cellColor, pixelOwner, isOwnedByUser;
+    
+    if (!isEmpty) {
+      cellColor = typeof pixelData === 'string' ? pixelData : pixelData.color;
+      pixelOwner = typeof pixelData === 'string' ? 'Unknown' : (pixelData.username || 'Unknown');
+      isOwnedByUser = cellColor === color;
+    }
+    
+    // Set hovered cell info
+    setHoveredCellInfo({
+      col,
+      row,
+      key,
+      isEmpty,
+      isOwnedByUser: !isEmpty && isOwnedByUser,
+      color: cellColor,
+      owner: pixelOwner,
+      coordinates: `(${col}, ${row})`
+    });
+    
+    // Set tooltip position relative to the viewport
+    // Adjust position to prevent tooltip from going off-screen
+    const tooltipWidth = 220;
+    const tooltipHeight = 120;
+    const margin = 10;
+    
+    let tooltipX = e.clientX + margin;
+    let tooltipY = e.clientY - tooltipHeight - margin;
+    
+    // Adjust if tooltip would go off the right edge
+    if (tooltipX + tooltipWidth > window.innerWidth) {
+      tooltipX = e.clientX - tooltipWidth - margin;
+    }
+    
+    // Adjust if tooltip would go off the left edge
+    if (tooltipX < margin) {
+      tooltipX = margin;
+    }
+    
+    // Adjust if tooltip would go off the top edge
+    if (tooltipY < margin) {
+      tooltipY = e.clientY + margin;
+    }
+    
+    // Adjust if tooltip would go off the bottom edge
+    if (tooltipY + tooltipHeight > window.innerHeight) {
+      tooltipY = window.innerHeight - tooltipHeight - margin;
+    }
+    
+    setTooltipPosition({
+      x: tooltipX,
+      y: tooltipY
+    });
+  }
+
+  /**
+   * Handle mouse leaving canvas - hide tooltip
+   */
+  function handleMouseLeave() {
+    if (hoverTooltipEnabled) {
+      setHoveredCellInfo(null);
+    }
+  }
+
+  /**
    * Handle pixel placement when canvas is clicked in color mode
    * Manages cooldown logic, purchased square bypass, and confirmation popups
    * @param {MouseEvent} e - Mouse click event
@@ -493,7 +618,9 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
     }
     
     // If cell is filled by the current user, do nothing
-    if (pixels[key] === color) {
+    const pixelData = pixels[key];
+    const pixelColor = typeof pixelData === 'string' ? pixelData : pixelData.color;
+    if (pixelColor === color) {
       return;
     }
     
@@ -527,6 +654,11 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
           color, 
           username 
         }));
+        
+        // Trigger leaderboard refresh after successful pixel placement
+        if (onPixelPlaced) {
+          onPixelPlaced();
+        }
       }
       
       // === COOLDOWN MANAGEMENT ===
@@ -624,13 +756,14 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
         confirmFlicker={confirmPlace.open && flicker ? { col: confirmPlace.col, row: confirmPlace.row, color } : null}
         onMouseDown={onMouseDown}
         onMouseMove={e => {
-          if (!colorMode) return onMouseMove(e);
-          // Mouse hover logic removed - using keyboard navigation instead
+          onMouseMove(e);
+          if (!colorMode) {
+            handleCellHover(e);
+          }
         }}
         onMouseUp={onMouseUp}
         onMouseLeave={e => {
-          // Remove hover reset logic - using keyboard navigation instead
-          onMouseUp(e);
+          handleMouseLeave();
         }}
         onWheel={onWheel}
       />
@@ -727,6 +860,38 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
             </svg>
           </button>
           
+          {/* === HOVER TOOLTIP TOGGLE BUTTON === */}
+          {/* Button to toggle hover tooltip functionality */}
+          <button
+            className="hover-tooltip-btn"
+            onClick={() => setHoverTooltipEnabled(prev => !prev)}
+            title={hoverTooltipEnabled ? "Disable hover tooltips" : "Enable hover tooltips"}
+            style={{
+              position: "absolute", 
+              bottom: 16, 
+              right: 136, 
+              background: hoverTooltipEnabled ? "rgba(255, 230, 102, 0.9)" : "rgba(255,255,255,0.9)", 
+              border: hoverTooltipEnabled ? `2px solid #333` : "none", 
+              borderRadius: "50%", 
+              width: 48, 
+              height: 48, 
+              display: "flex", 
+              alignItems: "center", 
+              justifyContent: "center", 
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)", 
+              cursor: "pointer", 
+              zIndex: 10,
+              transition: "all 0.2s ease"
+            }}
+          >
+            {/* Info/tooltip icon SVG */}
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9,9h0a3,3,0,0,1,6,0c0,2-3,3-3,3"/>
+              <path d="m12,17h0"/>
+            </svg>
+          </button>
+          
           {/* === COLOR PICKER COMPONENT === */}
           {/* Color selection interface (visible when colorMode is true) */}
           <ColorPicker color={color} setColor={setColor} visible={colorMode} />
@@ -736,26 +901,30 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
           {colorMode && (
             <div style={{
               position: "absolute",
-              left: 24,
-              bottom: 100,
+              right: 80,
+              bottom: 130,
               background: "rgba(0,0,0,0.8)",
               color: "#fff",
               borderRadius: 8,
-              padding: "12px 16px",
+              padding: "8px 12px",
               fontSize: 12,
               fontFamily: "monospace",
               zIndex: 20,
               maxWidth: 200,
+              maxHeight: 200,
               boxShadow: "0 2px 8px rgba(0,0,0,0.18)"
             }}>
-              <div style={{ fontWeight: "bold", marginBottom: 6 }}>Keyboard Navigation:</div>
+              <div style={{ fontWeight: "bold", marginBottom: 3 }}>Keyboard Navigation:</div>
               <div>WASD or Arrow Keys: Move</div>
               <div>Enter or Space: Place pixel</div>
-              <div style={{ marginTop: 4, fontSize: 10, opacity: 0.8 }}>
+              <div style={{ marginTop: 2, fontSize: 10, opacity: 0.8 }}>
                 Selected: ({selectedCell.col}, {selectedCell.row})
               </div>
             </div>
           )}
+          
+          {/* === HOVER TOOLTIP STATUS === */}
+          {/* Show status when hover tooltips are enabled - REMOVED */}
           
           {/* === COOLDOWN TIMER === */}
           {/* 24-hour format timer display */}
@@ -809,6 +978,77 @@ function Grid({ cellSize = 20, canvasSize = 720 }) {
           </p>
 
         </>
+      )}
+      
+      {/* === HOVER TOOLTIP === */}
+      {/* Show cell information when hovering in fullscreen mode */}
+      {isFullscreen && hoveredCellInfo && !colorMode && hoverTooltipEnabled && (
+        <div style={{
+          position: "fixed",
+          left: tooltipPosition.x,
+          top: tooltipPosition.y,
+          background: "rgba(0, 0, 0, 0.9)",
+          color: "#fff",
+          borderRadius: 8,
+          padding: "12px 16px",
+          fontSize: 12,
+          fontFamily: "monospace",
+          zIndex: 1000,
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+          pointerEvents: "none", // Don't interfere with mouse events
+          minWidth: 220,
+          maxWidth: 220,
+          border: "1px solid rgba(255, 255, 255, 0.2)",
+          animation: "fadeIn 0.2s ease-out",
+        }}>
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(-5px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
+          <div style={{ fontWeight: "bold", marginBottom: 8, color: "#ffe066" }}>
+            Cell Information
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <strong>Position:</strong> {hoveredCellInfo.coordinates}
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <strong>Status:</strong> {hoveredCellInfo.isEmpty ? "Empty" : "Occupied"}
+          </div>
+          {!hoveredCellInfo.isEmpty && (
+            <>
+              <div style={{ marginBottom: 4 }}>
+                <strong>Color:</strong> 
+                <span style={{
+                  display: "inline-block",
+                  width: 16,
+                  height: 16,
+                  backgroundColor: hoveredCellInfo.color,
+                  marginLeft: 8,
+                  marginRight: 8,
+                  border: "1px solid rgba(255, 255, 255, 0.3)",
+                  borderRadius: 2,
+                  verticalAlign: "middle"
+                }}></span>
+                {hoveredCellInfo.color}
+              </div>
+              <div style={{ marginBottom: 4 }}>
+                <strong>Owner:</strong> {hoveredCellInfo.isOwnedByUser ? "You" : hoveredCellInfo.owner}
+              </div>
+            </>
+          )}
+          {hoveredCellInfo.isEmpty && (
+            <div style={{ fontSize: 10, opacity: 0.8, marginTop: 4, color: "#90EE90" }}>
+              ✨ Available - Click to place your pixel here
+            </div>
+          )}
+          {!hoveredCellInfo.isEmpty && hoveredCellInfo.isOwnedByUser && (
+            <div style={{ fontSize: 10, opacity: 0.8, marginTop: 4, color: "#ffe066" }}>
+              ⭐ This is your pixel
+            </div>
+          )}
+        </div>
       )}
       
       {/* === FULLSCREEN TOGGLE BUTTON === */}

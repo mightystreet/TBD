@@ -1,0 +1,221 @@
+import React, { useState, useEffect } from 'react';
+import './Leaderboard.css';
+
+/**
+ * Leaderboard Component - Displays top users and their statistics
+ * Shows rankings based on pixels placed, contributions, and other metrics
+ */
+const Leaderboard = ({ token, refreshTrigger }) => {
+  const [leaderboardData, setLeaderboardData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedTab, setSelectedTab] = useState('pixels'); // 'pixels', 'recent', 'contributions'
+
+  /**
+   * Fetch leaderboard data from backend
+   */
+  const fetchLeaderboard = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/leaderboard', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch leaderboard data');
+      }
+      
+      const data = await response.json();
+      setLeaderboardData(data);
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+      console.error('Leaderboard fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch data on component mount and token change
+  useEffect(() => {
+    if (token) {
+      fetchLeaderboard();
+      // Refresh every 30 seconds
+      const interval = setInterval(fetchLeaderboard, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [token]);
+
+  // Refresh when refreshTrigger changes
+  useEffect(() => {
+    if (token && refreshTrigger) {
+      fetchLeaderboard();
+    }
+  }, [refreshTrigger, token]);
+
+  /**
+   * Get medal emoji for top positions
+   */
+  const getMedal = (position) => {
+    switch (position) {
+      case 1: return '🥇';
+      case 2: return '🥈';
+      case 3: return '🥉';
+      default: return `#${position}`;
+    }
+  };
+
+  /**
+   * Format large numbers with commas
+   */
+  const formatNumber = (num) => {
+    return num?.toLocaleString() || '0';
+  };
+
+  /**
+   * Get sorted data based on selected tab
+   */
+  const getSortedData = () => {
+    if (!leaderboardData.length) return [];
+    
+    switch (selectedTab) {
+      case 'pixels':
+        return [...leaderboardData].sort((a, b) => (b.pixelsPlaced || 0) - (a.pixelsPlaced || 0));
+      case 'recent':
+        return [...leaderboardData]
+          .filter(user => user.lastActive)
+          .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
+      case 'contributions':
+        return [...leaderboardData].sort((a, b) => (b.totalContributions || 0) - (a.totalContributions || 0));
+      default:
+        return leaderboardData;
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="leaderboard-container">
+        <div className="leaderboard-header">
+          <h2>🏆 Leaderboard</h2>
+        </div>
+        <div className="loading">Loading leaderboard...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="leaderboard-container">
+        <div className="leaderboard-header">
+          <h2>🏆 Leaderboard</h2>
+        </div>
+        <div className="error">
+          <p>Failed to load leaderboard: {error}</p>
+          <button onClick={fetchLeaderboard} className="retry-button">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const sortedData = getSortedData();
+
+  return (
+    <div className="leaderboard-container">
+      <div className="leaderboard-header">
+        <h2>🏆 Leaderboard</h2>
+        <button onClick={fetchLeaderboard} className="refresh-button" title="Refresh">
+          🔄
+        </button>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="leaderboard-tabs">
+        <button 
+          className={`tab ${selectedTab === 'pixels' ? 'active' : ''}`}
+          onClick={() => setSelectedTab('pixels')}
+        >
+          🎨 Pixels
+        </button>
+        <button 
+          className={`tab ${selectedTab === 'recent' ? 'active' : ''}`}
+          onClick={() => setSelectedTab('recent')}
+        >
+          ⏰ Recent
+        </button>
+        <button 
+          className={`tab ${selectedTab === 'contributions' ? 'active' : ''}`}
+          onClick={() => setSelectedTab('contributions')}
+        >
+          💎 Total
+        </button>
+      </div>
+
+      {/* Leaderboard Content */}
+      <div className="leaderboard-content">
+        {sortedData.length === 0 ? (
+          <div className="empty-state">
+            <p>No users found. Start placing pixels to appear on the leaderboard!</p>
+          </div>
+        ) : (
+          <div className="leaderboard-list">
+            {sortedData.slice(0, 100).map((user, index) => (
+              <div key={user.username} className={`leaderboard-item ${index < 3 ? 'top-three' : ''}`}>
+                <div className="rank">
+                  {getMedal(index + 1)}
+                </div>
+                
+                <div className="user-info">
+                  <div className="username">{user.username}</div>
+                  <div className="user-stats">
+                    {selectedTab === 'pixels' && (
+                      <>
+                        <span className="stat-label">Pixels:</span>
+                        <span className="stat-value">{formatNumber(user.pixelsPlaced)}</span>
+                      </>
+                    )}
+                    {selectedTab === 'recent' && (
+                      <>
+                        <span className="stat-label">Last seen:</span>
+                        <span className="stat-value">
+                          {user.lastActive ? new Date(user.lastActive).toLocaleString() : 'Never'}
+                        </span>
+                      </>
+                    )}
+                    {selectedTab === 'contributions' && (
+                      <>
+                        <span className="stat-label">Total:</span>
+                        <span className="stat-value">{formatNumber(user.totalContributions)}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* User Badge/Status */}
+                <div className="user-badge">
+                  {user.isOnline && <span className="online-indicator">🟢</span>}
+                  {index === 0 && <span className="crown">👑</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Footer Stats */}
+      <div className="leaderboard-footer">
+        <div className="global-stats">
+          <span>Total Users: {leaderboardData.length}</span>
+          <span>•</span>
+          <span>Total Pixels: {formatNumber(leaderboardData.reduce((sum, user) => sum + (user.pixelsPlaced || 0), 0))}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Leaderboard;

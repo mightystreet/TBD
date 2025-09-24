@@ -12,8 +12,27 @@ export default defineConfig({
   plugins: [
     react() // Enable React support with JSX transformation and Fast Refresh
   ],
-  // Additional configuration options can be added here:
-  // - server: Development server settings (port, host, proxy, etc.)
-  // - build: Production build settings (output directory, minification, etc.)
-  // - resolve: Module resolution settings (aliases, extensions, etc.)
+  server: {
+    // Development server configuration
+    port: 5173,
+    proxy: {
+      // Proxy API requests to the backend server
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      // Proxy other backend routes (register, login, etc.)
+      '/register': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/login': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      }
+    }
+  }
 })
